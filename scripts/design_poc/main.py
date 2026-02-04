@@ -51,6 +51,17 @@ class IsoparametricMapping1D:
         N = self.sf.N(xi)  # (Q,2)
         return torch.einsum("eqi,eni->eqn", N, X_nodes).squeeze(-1)
 
+    def inverse_map(self, x, nodes_coord):
+        inverse_mapping          = torch.ones([int(nodes_coord.shape[0]), 2, 2], dtype=x.dtype, device=x.device)
+        det_J                    = nodes_coord[:,0,0] - nodes_coord[:,1,0]
+        inverse_mapping[:,0,1]   = -nodes_coord[:,1,0]
+        inverse_mapping[:,1,1]   = nodes_coord[:,0,0]
+        inverse_mapping[:,1,0]   = -1*inverse_mapping[:,1,0]
+        inverse_mapping[:,:,:]  /= det_J[:,None,None]
+        x_extended = torch.stack((x, torch.ones_like(x)),dim=1)
+
+        return torch.einsum('eij,ej...->ei',inverse_mapping,x_extended.squeeze(1))
+
     def element_length(self, X_nodes):
         return X_nodes[:, 1, 0] - X_nodes[:, 0, 0]
 
@@ -64,6 +75,11 @@ class Mesh1D:
         self.conn = connectivity
         self.n_elements = connectivity.shape[0]
 
+        element_ids = torch.arange(self.conn.size(0))
+        element_nodes_ids  = self.conn[element_ids,:].T
+        self.ids             = torch.as_tensor(element_nodes_ids).to(self.nodes.device).t()[:,:,None]
+        nodes_coord     = torch.gather(self.nodes[:,None,:].repeat(1,2,1),0, self.ids.repeat(1,1,1))
+        self.nodes_coord = nodes_coord.to(self.nodes.dtype)
 
 # =========================================================
 # Field (DOFs + BCs)
@@ -104,39 +120,59 @@ class ElementEvaluator1D:
     def evaluate(self):
         device = self.mesh.nodes.device
 
-        xi_base = self.quad.points(device)
-        xi = xi_base.unsqueeze(0).repeat(self.mesh.n_elements, 1)
-        xi.requires_grad_(True)
-        w = self.quad.weights(device)          # (Q,)
+        #Barycentric coordinate of integration points
+        xi_g = self.quad.points(device)
+       
+        #Get shape function coordinate representation in reference element
+        N = self.sf.N(xi_g).repeat(self.mesh.conn.shape[0],1)
 
-        conn = self.mesh.conn
-        X = self.mesh.nodes[conn]              # (E, 2, 1)
-        U_nodes = self.field.full_values()[conn]  # (E, 2, 1)
+        #Get physical positions of quadrature points
+        x_g = torch.einsum('enx,en->ex', self.mesh.nodes_coord, N)
 
-        # Physical coordinates of quadrature points
-        x_q = self.mapping.map(X, xi)  # (E, Q)
+        #Get barycentric coordinates of quadrature points
+        x_q = self.mapping.inverse_map( x_g, self.mesh.nodes_coord)
 
-        # Interpolated field at quadrature points
-        N = self.sf.N(xi)               # (Q,2)
-        u_q = torch.einsum("eqi,eni->eqn", N, U_nodes).squeeze(-1)
+        #Get quadrature weights
+        w = self.quad.weights(device) 
 
-        # Gradient per element 
-        # Shape function derivatives
-        dN_dxi = self.sf.dN_dxi(xi)   # (E,Q,2)
+        #Evaluate measure
+        measure = self.mapping.element_length(self.mesh.nodes[self.mesh.conn])[:, None] * w[None, :]
 
-        # Element Jacobian
-        J = self.mapping.element_length(X)[:, None]   # (E,1)
+        #Assemble values at nodes
+        nodes_values   = torch.gather(self.field.full_values()[:,None,:].repeat(1,2,1),0, self.mesh.ids.repeat(1,1,1))
+        nodes_values   = nodes_values.to(N.dtype)
 
-        # du/dxi
-        du_dxi = torch.einsum("eqi,eni->eqn", dN_dxi, U_nodes).squeeze(-1)
+        #Interpolate
+        u_q = torch.einsum('gi...,gi->g',nodes_values,N)
 
-        # du/dx
-        grad_u = du_dxi / J
+        return x_q, u_q, measure
 
-        # Measure = detJ * weight
-        measure = self.mapping.element_length(X)[:, None] * w[None, :]
-        #import pdb ; breakpoint()
-        return x_q, u_q, grad_u, measure
+    def evaluate_at(self, x):
+        device = self.mesh.nodes.device
+
+        #Get shape function coordinate representation in reference element
+        N = self.sf.N(xi_g).repeat(self.mesh.conn.shape[0],1)
+
+        #Get physical positions of quadrature points
+        x_g = torch.einsum('enx,en->ex', self.mesh.nodes_coord, N)
+
+        #Get barycentric coordinates of quadrature points
+        x_q = self.mapping.inverse_map( x_g, self.mesh.nodes_coord)
+
+        #Get quadrature weights
+        w = self.quad.weights(device) 
+
+        #Evaluate measure
+        measure = self.mapping.element_length(self.mesh.nodes[self.mesh.conn])[:, None] * w[None, :]
+
+        #Assemble values at nodes
+        nodes_values   = torch.gather(self.field.full_values()[:,None,:].repeat(1,2,1),0, self.mesh.ids.repeat(1,1,1))
+        nodes_values   = nodes_values.to(N.dtype)
+
+        #Interpolate
+        u_pts = torch.einsum('gi...,gi->g',nodes_values,N)
+
+        return u_q
 
 
 # =========================================================
@@ -200,7 +236,7 @@ def main():
 
     print("* Training")
     for i in range(7000):
-        x_q, u_q, grad_u_q, measure = evaluator.evaluate()
+        x_q, u_q, measure = evaluator.evaluate()
         integrand = physics.integrand(u_q, grad_u_q, x_q)
         loss = integrator.integrate(integrand, measure)
 
