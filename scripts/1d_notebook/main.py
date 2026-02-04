@@ -44,6 +44,7 @@ class mySF1D_elementBased_vectorised(nn.Module):
             refCoord    = self.GetRefCoord(x_g,nodes_coord)
             N           = refCoord
             detJ        = nodes_coord[:,1] - nodes_coord[:,0]
+            #import pdb ; breakpoint()
             return N, x_g, detJ*self.w_g
 
         else:
@@ -138,13 +139,12 @@ class interpolation1D(nn.Module):
         nodal_values_tensor                     = torch.ones_like(self.values)
         nodal_values_tensor[self.dofs_free,:]   = self.nodal_values['free']
         nodal_values_tensor[~self.dofs_free,:]  = self.nodal_values['imposed']                    
-
         cell_nodes_IDs      = self.elements[k_elt,:].T
         Ids                 = torch.as_tensor(cell_nodes_IDs).to(nodal_values_tensor.device).t()[:,:,None]      # :,:,None] usefull only in 2+D  
 
-        
         self.nodes_values   = torch.gather(nodal_values_tensor[:,None,:].repeat(1,2,1),0, Ids.repeat(1,1,1))    # [:,:,None] usefull only in 2+D  Ids.repeat(1,1,d) with d \in [1,3]
         self.nodes_values   = self.nodes_values.to(shape_functions.dtype)
+        print("interpol, forward(): ",self.nodes_values,"\n")
         u = torch.einsum('gi...,gi->g',self.nodes_values,shape_functions)   
 
         if self.training : 

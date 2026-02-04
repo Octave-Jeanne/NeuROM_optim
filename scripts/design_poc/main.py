@@ -21,10 +21,10 @@ class LinearLineShapeFunction:
         return torch.stack([1 - xi, xi], dim=-1)
 
     def dN_dxi(self, xi):
-        n = xi.shape[0]
+        # xi shape: (E,Q)
         return torch.stack([
-            -torch.ones(n, device=xi.device),
-            torch.ones(n, device=xi.device)
+            -torch.ones_like(xi),
+            torch.ones_like(xi)
         ], dim=-1)
 
 
@@ -49,7 +49,7 @@ class IsoparametricMapping1D:
     def map(self, X_nodes, xi):
         # X_nodes: (E, 2, 1)
         N = self.sf.N(xi)  # (Q,2)
-        return torch.einsum("qi,eni->eqn", N, X_nodes).squeeze(-1)
+        return torch.einsum("eqi,eni->eqn", N, X_nodes).squeeze(-1)
 
     def element_length(self, X_nodes):
         return X_nodes[:, 1, 0] - X_nodes[:, 0, 0]
@@ -104,7 +104,9 @@ class ElementEvaluator1D:
     def evaluate(self):
         device = self.mesh.nodes.device
 
-        xi = self.quad.points(device)          # (Q,)
+        xi_base = self.quad.points(device)
+        xi = xi_base.unsqueeze(0).repeat(self.mesh.n_elements, 1)
+        xi.requires_grad_(True)
         w = self.quad.weights(device)          # (Q,)
 
         conn = self.mesh.conn
@@ -116,15 +118,24 @@ class ElementEvaluator1D:
 
         # Interpolated field at quadrature points
         N = self.sf.N(xi)               # (Q,2)
-        u_q = torch.einsum("qi,eni->eqn", N, U_nodes).squeeze(-1)
+        u_q = torch.einsum("eqi,eni->eqn", N, U_nodes).squeeze(-1)
 
-        # Gradient per element (manual for 1D linear element)
-        grad_u = (U_nodes[:, 1, 0] - U_nodes[:, 0, 0]) / self.mapping.element_length(X)
-        grad_u = grad_u[:, None]  # shape (E,1)
+        # Gradient per element 
+        # Shape function derivatives
+        dN_dxi = self.sf.dN_dxi(xi)   # (E,Q,2)
+
+        # Element Jacobian
+        J = self.mapping.element_length(X)[:, None]   # (E,1)
+
+        # du/dxi
+        du_dxi = torch.einsum("eqi,eni->eqn", dN_dxi, U_nodes).squeeze(-1)
+
+        # du/dx
+        grad_u = du_dxi / J
 
         # Measure = detJ * weight
         measure = self.mapping.element_length(X)[:, None] * w[None, :]
-
+        #import pdb ; breakpoint()
         return x_q, u_q, grad_u, measure
 
 
@@ -158,7 +169,6 @@ def f(x):
 # Main
 # =========================================================
 def main():
-
     # ---------------- Mesh ----------------
     N = 40
     nodes = torch.linspace(0, 6.28, N)[:, None]
