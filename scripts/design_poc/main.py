@@ -1,3 +1,5 @@
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
@@ -7,37 +9,68 @@ torch.set_default_dtype(torch.float32)
 # =========================================================
 # Reference Element
 # =========================================================
-class LineReferenceElement:
+@dataclass
+class ReferenceElement(ABC):
+    pass
+
+@dataclass
+class LineReferenceElement(ReferenceElement):
     dim = 1
     n_nodes = 2
+    simplex = torch.tensor([-1.,1.])
 
 
 # =========================================================
 # Shape Functions
 # =========================================================
-class LinearLineShapeFunction:
+class ShapeFunction(ABC):
+    @abstractmethod
+    def N(self, xi):
+        pass
+
+class LinearLineShapeFunction(ShapeFunction):
     def N(self, xi):
         # xi shape: (n_q,)
-        return torch.stack([1 - xi, xi], dim=-1)
-
-    def dN_dxi(self, xi):
-        # xi shape: (E,Q)
-        return torch.stack([
-            -torch.ones_like(xi),
-            torch.ones_like(xi)
-        ], dim=-1)
-
+        return torch.stack([-0.5*(xi+1.), 0.5*(xi+1.)], dim=1)
 
 # =========================================================
-# Quadrature
+# Quadratures
 # =========================================================
-class MidPointQuadrature1D:
+class QuadratureRule(ABC):
+    def __init__(self, reference_element):
+        self.reference_element = reference_element
+
+    @abstractmethod
     def points(self, device):
-        return torch.tensor([0.5], device=device)
+        pass
+
+    @abstractmethod
+    def weights(self, device ):
+       pass  
+
+class MidPointQuadrature1D(QuadratureRule):
+    def __init__(self, reference_element = LineReferenceElement):
+        super().__init__(reference_element)
+
+    def points(self, device ):
+        return torch.tensor([0.], device=device)
 
     def weights(self, device):
-        return torch.tensor([1.0], device=device)
+        w = self.reference_element.simplex[1] - self.reference_element.simplex[0]
+        return torch.tensor([w], device=device)
 
+class TwoPointsQuadrature1D(LineReferenceElement):
+    def __init__(self, reference_element = LineReferenceElement):
+        super().__init__(reference_element)
+
+    def points(self, device ):
+        l1=0.5*(1. - 1/3**0.5)
+        l2=0.5*(1. + 1/3**0.5)
+        return torch.tensor([-l2+ l1, -l1 + l2], device=device)
+
+    def weights(self, device ):
+        w = 0.5*(self.reference_element.simplex[1] - self.reference_element.simplex[0])
+        return torch.tensor([w,w], device=device) 
 
 # =========================================================
 # Geometry Mapping
@@ -46,10 +79,9 @@ class IsoparametricMapping1D:
     def __init__(self, shape_function):
         self.sf = shape_function
 
-    def map(self, X_nodes, xi):
-        # X_nodes: (E, 2, 1)
-        N = self.sf.N(xi)  # (Q,2)
-        return torch.einsum("eqi,eni->eqn", N, X_nodes).squeeze(-1)
+    def map(self, nodes_positions, xi):
+        N = self.sf.N(xi)
+        return torch.einsum("enx,enx->e", nodes_positions,N).squeeze(-1)
 
     def inverse_map(self, x, nodes_coord):
         inverse_mapping          = torch.ones([int(nodes_coord.shape[0]), 2, 2], dtype=x.dtype, device=x.device)
@@ -62,8 +94,8 @@ class IsoparametricMapping1D:
 
         return torch.einsum('eij,ej...->ei',inverse_mapping,x_extended.squeeze(1))
 
-    def element_length(self, X_nodes):
-        return X_nodes[:, 1, 0] - X_nodes[:, 0, 0]
+    def element_length(self, x_nodes):
+        return x_nodes[:, 1, 0] - x_nodes[:, 0, 0]
 
 
 # =========================================================
@@ -71,15 +103,47 @@ class IsoparametricMapping1D:
 # =========================================================
 class Mesh1D:
     def __init__(self, nodes, connectivity):
-        self.nodes = nodes
+        self.nodes_positions = nodes
         self.conn = connectivity
+        self.n_nodes = nodes.shape[0]
         self.n_elements = connectivity.shape[0]
 
-        element_ids = torch.arange(self.conn.size(0))
-        element_nodes_ids  = self.conn[element_ids,:].T
-        self.ids             = torch.as_tensor(element_nodes_ids).to(self.nodes.device).t()[:,:,None]
-        nodes_coord     = torch.gather(self.nodes[:,None,:].repeat(1,2,1),0, self.ids.repeat(1,1,1))
-        self.nodes_coord = nodes_coord.to(self.nodes.dtype)
+        #Individual element index
+        self.elements_ids = torch.arange(self.conn.size(0))
+        
+        #Pairs of nodes indices per element
+        element_nodes_ids  = self.conn[self.elements_ids,:].T
+        self.element_nodes_ids = torch.as_tensor(element_nodes_ids).to(self.nodes_positions.device).t()[:,:,None]
+        
+        #Pairs of nodes positions
+        element_nodes_positions = torch.gather(self.nodes_positions[:,None,:].repeat(1,2,1),0, self.element_nodes_ids.repeat(1,1,1))
+        self.element_nodes_positions = element_nodes_positions.to(self.nodes_positions.dtype)
+
+        def sub_mesh_at(self,x):
+            import math
+            def append_if_not_close(lst, value, rel_tol=1e-9, abs_tol=0.0):
+                if not any(math.isclose(value, x, rel_tol=rel_tol, abs_tol=abs_tol) for x in lst):
+                    lst.append(value)
+
+            connectivity = []
+            nodes = []
+            n_idx = 0
+            for x_i in x:
+                for k in self.elements_ids:
+                    x_first = self.element_nodes_positions[k,0]
+                    x_second = self.element_nodes_positions[k,1]
+                    if x_i >= x_first and x_i <= x_second:
+                        #Add node if not already existing 
+                        append_if_not_close(nodes, x_first)
+                        append_if_not_close(nodes, x_second)
+                        connectivity.append(n_idx, n_idx+1)
+                        n_idx+=1
+                        break
+
+            nodes = torch.FloatTensor(nodes)
+            connectivity = torch.FloatTensor(connectivity)
+
+            return Mesh1D(nodes=nodes, connectivity=connectivity)
 
 # =========================================================
 # Field (DOFs + BCs)
@@ -88,7 +152,7 @@ class ScalarField1D(nn.Module):
     def __init__(self, mesh, dirichlet_nodes):
         super().__init__()
         self.mesh = mesh
-        n_nodes = mesh.nodes.shape[0]
+        n_nodes = mesh.n_nodes
 
         values = 0.5 * torch.ones(n_nodes, 1)
         dofs_free = torch.ones(n_nodes, dtype=torch.bool)
@@ -118,25 +182,47 @@ class ElementEvaluator1D:
         self.mapping = mapping
 
     def evaluate(self):
-        device = self.mesh.nodes.device
+        device = self.mesh.nodes_positions.device
 
-        #Barycentric coordinate of integration points
-        xi_g = self.quad.points(device)
-       
+        #Get reference position of quadrature points
+        xi_g = self.quad.points(device).repeat(self.mesh.n_elements,1)
+        import pdb ; breakpoint()
+      
+        #Get physical positions of quadrature points on mesh 
+        x_g = self.mapping.map( self.mesh.element_nodes_positions, xi_g)
+
+        #Get coordinates of those points back in reference coordinates
+        x_q = self.mapping.inverse_map( x_g, self.mesh.element_nodes_positions)
         #Get shape function coordinate representation in reference element
-        N = self.sf.N(xi_g).repeat(self.mesh.conn.shape[0],1)
-
-        #Get physical positions of quadrature points
-        x_g = torch.einsum('enx,en->ex', self.mesh.nodes_coord, N)
-
-        #Get barycentric coordinates of quadrature points
-        x_q = self.mapping.inverse_map( x_g, self.mesh.nodes_coord)
+        N = self.sf.N(x_q)
 
         #Get quadrature weights
         w = self.quad.weights(device) 
 
         #Evaluate measure
-        measure = self.mapping.element_length(self.mesh.nodes[self.mesh.conn])[:, None] * w[None, :]
+        measure = self.mapping.element_length(self.mesh.nodes_positions[self.mesh.conn])[:, None] * w[None, :]
+
+        #Assemble values at nodes
+        nodes_values = torch.gather(self.field.full_values()[:,None,:].repeat(1,2,1),0, self.mesh.element_nodes_ids.repeat(1,1,1))
+        nodes_values = nodes_values.to(N.dtype)
+
+        #Interpolate
+        u_q = torch.einsum('gij,gi->gj', nodes_values, x_q)
+
+        return x_g, u_q, measure
+
+    def evaluate_at(self, x):
+        device = self.mesh.nodes.device
+
+        #Get elements to which x belongs
+        sub_mesh = self.mesh.sub_mesh_at(x)
+
+        #Get barycentric coordinates of points on sub-mesh
+        #Only done on elements to which x belongs to
+        x_q = self.mapping.inverse_map( x_g, self.mesh.element_nodes_positions)
+
+        #Get corresponding shape functions
+        N = self.sf.N(x_q).repeat(self.elements.shape[0],1)
 
         #Assemble values at nodes
         nodes_values   = torch.gather(self.field.full_values()[:,None,:].repeat(1,2,1),0, self.mesh.ids.repeat(1,1,1))
@@ -144,33 +230,6 @@ class ElementEvaluator1D:
 
         #Interpolate
         u_q = torch.einsum('gi...,gi->g',nodes_values,N)
-
-        return x_q, u_q, measure
-
-    def evaluate_at(self, x):
-        device = self.mesh.nodes.device
-
-        #Get shape function coordinate representation in reference element
-        N = self.sf.N(xi_g).repeat(self.mesh.conn.shape[0],1)
-
-        #Get physical positions of quadrature points
-        x_g = torch.einsum('enx,en->ex', self.mesh.nodes_coord, N)
-
-        #Get barycentric coordinates of quadrature points
-        x_q = self.mapping.inverse_map( x_g, self.mesh.nodes_coord)
-
-        #Get quadrature weights
-        w = self.quad.weights(device) 
-
-        #Evaluate measure
-        measure = self.mapping.element_length(self.mesh.nodes[self.mesh.conn])[:, None] * w[None, :]
-
-        #Assemble values at nodes
-        nodes_values   = torch.gather(self.field.full_values()[:,None,:].repeat(1,2,1),0, self.mesh.ids.repeat(1,1,1))
-        nodes_values   = nodes_values.to(N.dtype)
-
-        #Interpolate
-        u_pts = torch.einsum('gi...,gi->g',nodes_values,N)
 
         return u_q
 
@@ -182,8 +241,9 @@ class PoissonPhysics:
     def __init__(self, f):
         self.f = f
 
-    def integrand(self, u, grad_u, x):
-        return 0.5 * grad_u**2 - self.f(x) * u
+    def integrand(self, x, u):
+        du_dx = torch.autograd.grad(u, x, grad_outputs=torch.ones_like(u), create_graph=True)[0]
+        return 0.5 * du_dx**2 - self.f(x) * u
 
 
 # =========================================================
@@ -237,7 +297,7 @@ def main():
     print("* Training")
     for i in range(7000):
         x_q, u_q, measure = evaluator.evaluate()
-        integrand = physics.integrand(u_q, grad_u_q, x_q)
+        integrand = physics.integrand(x_q, u_q)
         loss = integrator.integrate(integrand, measure)
 
         optimizer.zero_grad()
@@ -256,6 +316,7 @@ def main():
     plt.show()
 
     # ---------------- Evaluation ----------------
+    exit()
     field.eval()
     U_full = field.full_values()
 
