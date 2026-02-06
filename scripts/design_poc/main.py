@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
@@ -9,22 +9,21 @@ torch.set_default_dtype(torch.float32)
 # =========================================================
 # Reference Element
 # =========================================================
-@dataclass
 class ReferenceElement(ABC):
     pass
 
-@dataclass
 class LineReferenceElement(ReferenceElement):
-    dim = 1
-    n_nodes = 2
-    simplex = torch.tensor([-1.,1.])
-
+    def __init__(self):
+        self.simplex = torch.tensor([-1.0, 1.0])
+        self.dim = 1
+        self.n_nodes = self.simplex.shape[0]
+        self.measure = torch.abs(self.simplex[1] - self.simplex[0]).item()
 
 # =========================================================
 # Shape Functions
 # =========================================================
 class ShapeFunction(ABC):
-    def __init__(self, reference_element):
+    def __init__(self, reference_element: ReferenceElement):
         self.reference_element = reference_element
 
     @abstractmethod
@@ -32,7 +31,7 @@ class ShapeFunction(ABC):
         pass
 
 class LinearLineShapeFunction(ShapeFunction):
-    def __init__(self, reference_element = LineReferenceElement):
+    def __init__(self, reference_element = LineReferenceElement()):
         super().__init__(reference_element)
 
     def N(self, xi):
@@ -54,14 +53,14 @@ class QuadratureRule(ABC):
        pass  
 
 class MidPointQuadrature1D(QuadratureRule):
-    def __init__(self, reference_element = LineReferenceElement):
+    def __init__(self, reference_element = LineReferenceElement()):
         super().__init__(reference_element)
 
     def points(self, device ):
-        return torch.tensor([0.], device=device)
+        return torch.tensor([0., 0.], device=device)
 
     def weights(self, device):
-        w = self.reference_element.simplex[1] - self.reference_element.simplex[0]
+        w = self.reference_element.measure
         return torch.tensor([w], device=device)
 
 class TwoPointsQuadrature1D(LineReferenceElement):
@@ -74,7 +73,7 @@ class TwoPointsQuadrature1D(LineReferenceElement):
         return torch.tensor([-l2+ l1, -l1 + l2], device=device)
 
     def weights(self, device ):
-        w = 0.5*(self.reference_element.simplex[1] - self.reference_element.simplex[0])
+        w = 0.5*self.reference_element.measure
         return torch.tensor([w,w], device=device) 
 
 # =========================================================
@@ -107,7 +106,6 @@ class IsoparametricMapping1D:
         
         return xi 
 
-
     def element_length(self, x_nodes):
         return x_nodes[:, 1, 0] - x_nodes[:, 0, 0]
 
@@ -123,12 +121,12 @@ class Mesh1D:
         self.n_elements = connectivity.shape[0]
 
         #Individual element index
-        self.elements_ids = torch.arange(self.conn.size(0))
-        
+        element_ids = torch.arange(self.conn.size(0))
+
         #Pairs of nodes indices per element
-        element_nodes_ids  = self.conn[self.elements_ids,:].T
+        element_nodes_ids  = self.conn[element_ids,:].T
         self.element_nodes_ids = torch.as_tensor(element_nodes_ids).to(self.nodes_positions.device).t()[:,:,None]
-        
+ 
         #Pairs of nodes positions
         element_nodes_positions = torch.gather(self.nodes_positions[:,None,:].repeat(1,2,1),0, self.element_nodes_ids.repeat(1,1,1))
         self.element_nodes_positions = element_nodes_positions.to(self.nodes_positions.dtype)
@@ -140,7 +138,6 @@ class Mesh1D:
 class ScalarField1D(nn.Module):
     def __init__(self, mesh, dirichlet_nodes):
         super().__init__()
-        self.mesh = mesh
         n_nodes = mesh.n_nodes
 
         values = 0.5 * torch.ones(n_nodes, 1)
@@ -174,8 +171,12 @@ class ElementEvaluator1D:
         device = self.mesh.nodes_positions.device
 
         #Get reference position of quadrature points
-        xi_g = self.quad.points(device).repeat(self.mesh.n_elements,1).squeeze(-1)
-      
+        xi_g_barycentric = self.quad.points(device).repeat(self.mesh.n_elements,1).squeeze(-1)
+
+        #Convert to coordinate on the reference element
+        x_ref = self.sf.reference_element.simplex.repeat(xi_g_barycentric.shape[0],1)
+        xi_g = torch.einsum('ei,ei->e',xi_g_barycentric,x_ref)
+
         #Get physical positions of quadrature points on mesh 
         x_g = self.mapping.map( self.mesh.element_nodes_positions, xi_g)
         x_g.requires_grad_(True)
@@ -229,13 +230,12 @@ class ElementEvaluator1D:
 
         #Get shape function coordinate representation in reference element
         N = self.sf.N(xi)
-        
+ 
         self.field.eval()
         u_full = self.field.full_values()
 
         #Assemble values at nodes
         nodes_values = u_full[element_nodes_ids]
-        #nodes_values = torch.gather(u_full[:,None,:].repeat(1,2,1),0, element_nodes_ids.repeat(1,1,1))
         nodes_values = nodes_values.to(N.dtype)
 
         #Interpolate
@@ -273,6 +273,27 @@ def f(x):
 # Main
 # =========================================================
 def main():
+    """
+    Proof of concept of design for HideNN-FEM
+
+    This file presents the same interpolation than in the [noteBook from Alexandre](https://alexandredabyseesaram.github.io/Simplified_1D_NeuROM/demos/1D_element_based.html).
+    The design is at follow:
+    * Interface for a *reference element*, ReferenceElement.
+      It exposes:
+      * A dimension
+      * Which simplex it represents (segment, triangle, tetrahedron, ...)
+      * The simplex measure (length, area, volume, ...)
+      * The number of nodes of the simplex
+    * Interface for a *shape function*, ShapeFunction.
+      It exposes:
+        * The element over which it operates.
+        * A function N() which acts over a reference coordinate (local to the element).
+    * Interface for a *quadrature rule*, QuadratureRule.
+      It exposes: 
+      * The element over which it operates.
+      * The points() which it defines (should be in barycentric coordinates to easily generalize to triangle and tetrahedron)
+      * The weights() associated which those points.
+    """
     # ---------------- Mesh ----------------
     N = 40
     nodes = torch.linspace(0, 6.28, N)[:, None]
@@ -331,8 +352,7 @@ def main():
 
     # ---------------- Evaluation ----------------
     print("\n* Evaluation")
-    field.eval()
-    # Gauss points solution
+
     x_test = torch.linspace(0, 6, 30)
     u_test = evaluator.evaluate_at(x_test)
 
