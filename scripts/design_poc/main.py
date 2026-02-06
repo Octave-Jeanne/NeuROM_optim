@@ -24,14 +24,19 @@ class LineReferenceElement(ReferenceElement):
 # Shape Functions
 # =========================================================
 class ShapeFunction(ABC):
+    def __init__(self, reference_element):
+        self.reference_element = reference_element
+
     @abstractmethod
     def N(self, xi):
         pass
 
 class LinearLineShapeFunction(ShapeFunction):
+    def __init__(self, reference_element = LineReferenceElement):
+        super().__init__(reference_element)
+
     def N(self, xi):
-        # xi shape: (n_q,)
-        return torch.stack([-0.5*(xi+1.), 0.5*(xi+1.)], dim=1)
+        return torch.stack([-0.5*(xi-1.), 0.5*(xi+1.)], dim=1)
 
 # =========================================================
 # Quadratures
@@ -79,20 +84,29 @@ class IsoparametricMapping1D:
     def __init__(self, shape_function):
         self.sf = shape_function
 
-    def map(self, nodes_positions, xi):
+    def map(self, element_nodes_positions, xi):
         N = self.sf.N(xi)
-        return torch.einsum("enx,enx->e", nodes_positions,N).squeeze(-1)
+        return torch.einsum('enx,en->ex', element_nodes_positions,N)
 
-    def inverse_map(self, x, nodes_coord):
-        inverse_mapping          = torch.ones([int(nodes_coord.shape[0]), 2, 2], dtype=x.dtype, device=x.device)
-        det_J                    = nodes_coord[:,0,0] - nodes_coord[:,1,0]
-        inverse_mapping[:,0,1]   = -nodes_coord[:,1,0]
-        inverse_mapping[:,1,1]   = nodes_coord[:,0,0]
-        inverse_mapping[:,1,0]   = -1*inverse_mapping[:,1,0]
-        inverse_mapping[:,:,:]  /= det_J[:,None,None]
+    def inverse_map(self, x, element_nodes_positions):
+        #Construct M^{-1}
+        det_J = element_nodes_positions[:,0,0] - element_nodes_positions[:,1,0]
+        inverse_mapping = torch.ones([int(element_nodes_positions.shape[0]), 2, 2], dtype=x.dtype, device=x.device)
+        inverse_mapping[:,0,1] = -element_nodes_positions[:,1,0]
+        inverse_mapping[:,1,1] = element_nodes_positions[:,0,0]
+        inverse_mapping[:,1,0] = -1*inverse_mapping[:,1,0]
+        inverse_mapping[:,:,:] /= det_J[:,None,None]
         x_extended = torch.stack((x, torch.ones_like(x)),dim=1)
+        
+        #Get barycentric coordinates on reference element
+        xi_barycentric = torch.einsum('eij,ej...->ei',inverse_mapping,x_extended.squeeze(1))
 
-        return torch.einsum('eij,ej...->ei',inverse_mapping,x_extended.squeeze(1))
+        #Convert to coordinate on the reference element
+        x_ref = self.sf.reference_element.simplex.repeat(xi_barycentric.shape[0],1)
+        xi = torch.einsum('ei,ei->e',xi_barycentric,x_ref)
+        
+        return xi 
+
 
     def element_length(self, x_nodes):
         return x_nodes[:, 1, 0] - x_nodes[:, 0, 0]
@@ -119,31 +133,6 @@ class Mesh1D:
         element_nodes_positions = torch.gather(self.nodes_positions[:,None,:].repeat(1,2,1),0, self.element_nodes_ids.repeat(1,1,1))
         self.element_nodes_positions = element_nodes_positions.to(self.nodes_positions.dtype)
 
-        def sub_mesh_at(self,x):
-            import math
-            def append_if_not_close(lst, value, rel_tol=1e-9, abs_tol=0.0):
-                if not any(math.isclose(value, x, rel_tol=rel_tol, abs_tol=abs_tol) for x in lst):
-                    lst.append(value)
-
-            connectivity = []
-            nodes = []
-            n_idx = 0
-            for x_i in x:
-                for k in self.elements_ids:
-                    x_first = self.element_nodes_positions[k,0]
-                    x_second = self.element_nodes_positions[k,1]
-                    if x_i >= x_first and x_i <= x_second:
-                        #Add node if not already existing 
-                        append_if_not_close(nodes, x_first)
-                        append_if_not_close(nodes, x_second)
-                        connectivity.append(n_idx, n_idx+1)
-                        n_idx+=1
-                        break
-
-            nodes = torch.FloatTensor(nodes)
-            connectivity = torch.FloatTensor(connectivity)
-
-            return Mesh1D(nodes=nodes, connectivity=connectivity)
 
 # =========================================================
 # Field (DOFs + BCs)
@@ -185,16 +174,16 @@ class ElementEvaluator1D:
         device = self.mesh.nodes_positions.device
 
         #Get reference position of quadrature points
-        xi_g = self.quad.points(device).repeat(self.mesh.n_elements,1)
-        import pdb ; breakpoint()
+        xi_g = self.quad.points(device).repeat(self.mesh.n_elements,1).squeeze(-1)
       
         #Get physical positions of quadrature points on mesh 
         x_g = self.mapping.map( self.mesh.element_nodes_positions, xi_g)
-
+        x_g.requires_grad_(True)
         #Get coordinates of those points back in reference coordinates
-        x_q = self.mapping.inverse_map( x_g, self.mesh.element_nodes_positions)
+        xi_q = self.mapping.inverse_map( x_g, self.mesh.element_nodes_positions)
+
         #Get shape function coordinate representation in reference element
-        N = self.sf.N(x_q)
+        N = self.sf.N(xi_q)
 
         #Get quadrature weights
         w = self.quad.weights(device) 
@@ -207,32 +196,51 @@ class ElementEvaluator1D:
         nodes_values = nodes_values.to(N.dtype)
 
         #Interpolate
-        u_q = torch.einsum('gij,gi->gj', nodes_values, x_q)
+        u_q = torch.einsum('gij,gi->gj', nodes_values, N)
 
         return x_g, u_q, measure
 
     def evaluate_at(self, x):
-        device = self.mesh.nodes.device
+        device = self.mesh.nodes_positions.device
 
-        #Get elements to which x belongs
-        sub_mesh = self.mesh.sub_mesh_at(x)
+        #Get elements in which x is located
+        ids = []
+        for x_i in x:
+            for e, conn in enumerate(self.mesh.conn):
+                x_first = self.mesh.nodes_positions[conn[0]]
+                x_second = self.mesh.nodes_positions[conn[1]]
+                if x_i >= x_first and x_i <= x_second:
+                    ids.append(e)
+                    break
+        element_ids = torch.tensor(ids)
+ 
+        #Pairs of nodes indices per element
+        element_nodes_ids = self.mesh.conn[element_ids,:].T
+        element_nodes_ids = torch.as_tensor(element_nodes_ids).to(device).t()[:,:,None].squeeze(-1)
+        
+        #Pairs of nodes positions
+        element_nodes_positions = self.mesh.element_nodes_positions[element_ids]
 
-        #Get barycentric coordinates of points on sub-mesh
-        #Only done on elements to which x belongs to
-        x_q = self.mapping.inverse_map( x_g, self.mesh.element_nodes_positions)
+        #We want to compute: u(x) = u_i^0 * N_i^0(\xi) + u_i^1 * N_i^1(\xi)
+        #Where i is the index of element to which u x belongs
+        #and \xi is the reference coordinate
+        #Get reference coordinate of x in pair of nodes
+        xi = self.mapping.inverse_map(x, element_nodes_positions)
 
-        #Get corresponding shape functions
-        N = self.sf.N(x_q).repeat(self.elements.shape[0],1)
+        #Get shape function coordinate representation in reference element
+        N = self.sf.N(xi)
+        
+        self.field.eval()
+        u_full = self.field.full_values()
 
         #Assemble values at nodes
-        nodes_values   = torch.gather(self.field.full_values()[:,None,:].repeat(1,2,1),0, self.mesh.ids.repeat(1,1,1))
-        nodes_values   = nodes_values.to(N.dtype)
+        nodes_values = u_full[element_nodes_ids]
+        #nodes_values = torch.gather(u_full[:,None,:].repeat(1,2,1),0, element_nodes_ids.repeat(1,1,1))
+        nodes_values = nodes_values.to(N.dtype)
 
         #Interpolate
-        u_q = torch.einsum('gi...,gi->g',nodes_values,N)
-
-        return u_q
-
+        u_q = torch.einsum('gij,gi->gj', nodes_values, N)
+        return u_q.detach()
 
 # =========================================================
 # Physics (Integrand ONLY)
@@ -294,8 +302,13 @@ def main():
     optimizer = torch.optim.Adam(field.parameters(), lr=1)
     loss_history = []
 
-    print("* Training")
-    for i in range(7000):
+    # ---------------- Plots ----------------
+    plot_loss = True
+    plot_test = True
+
+    print("* Training") 
+    n_epochs = 7000
+    for i in range(n_epochs):
         x_q, u_q, measure = evaluator.evaluate()
         integrand = physics.integrand(x_q, u_q)
         loss = integrator.integrate(integrand, measure)
@@ -308,48 +321,31 @@ def main():
         print(f"{i=} loss={loss.item():.3e}", end="\r")
 
     # ---------------- Plot Loss ----------------
-    plt.figure()
-    plt.plot(loss_history)
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.title("Training Loss")
-    plt.show()
+    if plot_loss:
+        plt.figure()
+        plt.plot(loss_history)
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss")
+        plt.title("Training Loss")
+        plt.show()
 
     # ---------------- Evaluation ----------------
-    exit()
+    print("\n* Evaluation")
     field.eval()
-    U_full = field.full_values()
-
-    # Evaluate solution at test points
-    x_test = torch.linspace(0, 6, 30)
-    u_test = []
-
-    for x in x_test:
-        for e, conn in enumerate(mesh.conn):
-            x1 = mesh.nodes[conn[0]]
-            x2 = mesh.nodes[conn[1]]
-            if x >= x1 and x <= x2:
-                xi = (x - x1) / (x2 - x1)
-                N_local = torch.tensor([1 - xi, xi])
-                u_nodes = U_full[conn].squeeze()
-                u_test.append((N_local @ u_nodes).item())
-                break
-
-    u_test = torch.tensor(u_test)
-
     # Gauss points solution
-    x_q, u_q, _, _ = evaluator.evaluate()
+    x_test = torch.linspace(0, 6, 30)
+    u_test = evaluator.evaluate_at(x_test)
 
     # ---------------- Plot solution ----------------
-    plt.figure()
-    plt.plot(x_q.flatten().detach(), u_q.flatten().detach(), "+", label="Gauss points")
-    plt.plot(x_test, u_test, "o", label="Test points")
-    plt.xlabel("x")
-    plt.ylabel("u(x)")
-    plt.title("Displacement Field")
-    plt.legend()
-    plt.show()
-
+    if plot_test:
+        plt.figure()
+        plt.plot(x_q.flatten().detach(), u_q.flatten().detach(), "+", label="Gauss points")
+        plt.plot(x_test, u_test, "o", label="Test points")
+        plt.xlabel("x [mm]")
+        plt.ylabel("u(x) [mm]")
+        plt.title("Displacement Field")
+        plt.legend()
+        plt.show()
 
 if __name__ == "__main__":
     main()
