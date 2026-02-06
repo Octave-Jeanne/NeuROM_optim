@@ -31,18 +31,26 @@ class ShapeFunction(ABC):
         pass
 
 class LinearLineShapeFunction(ShapeFunction):
-    def __init__(self, reference_element = LineReferenceElement()):
-        super().__init__(reference_element)
+    def __init__(self):
+        super().__init__(LineReferenceElement())
 
     def N(self, xi):
         return torch.stack([-0.5*(xi-1.), 0.5*(xi+1.)], dim=1)
+
+class SecondOrderLineShapeFunction(ShapeFunction):
+    def __init__(self):
+        super().__init__(LineReferenceElement())
+
+    def N(self, xi):
+        return torch.stack( [0.5 * xi * (xi - 1.0), 1.0 - xi**2, 0.5 * xi * (xi + 1.0)], dim=1)
+
 
 # =========================================================
 # Quadratures
 # =========================================================
 class QuadratureRule(ABC):
     def __init__(self, reference_element):
-        self.reference_element = reference_element
+        self.reference_element = reference_element()
 
     @abstractmethod
     def points(self, device):
@@ -53,8 +61,8 @@ class QuadratureRule(ABC):
        pass  
 
 class MidPointQuadrature1D(QuadratureRule):
-    def __init__(self, reference_element = LineReferenceElement()):
-        super().__init__(reference_element)
+    def __init__(self):
+        super().__init__(LineReferenceElement)
 
     def points(self, device ):
         return torch.tensor([0., 0.], device=device)
@@ -63,9 +71,9 @@ class MidPointQuadrature1D(QuadratureRule):
         w = self.reference_element.measure
         return torch.tensor([w], device=device)
 
-class TwoPointsQuadrature1D(LineReferenceElement):
-    def __init__(self, reference_element = LineReferenceElement):
-        super().__init__(reference_element)
+class TwoPointsQuadrature1D(QuadratureRule):
+    def __init__(self):
+        super().__init__(LineReferenceElement)
 
     def points(self, device ):
         l1=0.5*(1. - 1/3**0.5)
@@ -306,7 +314,7 @@ def main():
 
     # ---------------- FEM building blocks ----------------
     sf = LinearLineShapeFunction()
-    quad = MidPointQuadrature1D()
+    quad = TwoPointsQuadrature1D()
     mapping = IsoparametricMapping1D(sf)
 
     # ---------------- Field ----------------
