@@ -232,7 +232,6 @@ class ElementEvaluator1D(nn.Module):
         xi_q = self.mapping.inverse_map(x_g, self.mesh.element_nodes_positions)
         N = self.sf.N(xi_q)
         w = self.quad.weights()
-
         measure = (
             self.mapping.element_length(self.mesh.nodes_positions[self.mesh.conn])[
                 :, None
@@ -308,6 +307,58 @@ def f(x):
     return 1000.0 + 0 * x
 
 
+# ============================================================
+# FEM Model
+# ============================================================
+class FEMModel(nn.Module):
+    """
+    Thin orchestration module.
+
+    Responsibilities:
+    - Own all FEM submodules so .to(device/dtype) works globally
+    - Provide forward() for training / inference
+    - Act as checkpoint root
+
+    Non-responsibilities:
+    - No FEM math implementation
+    - No assembly logic
+    - No physics implementation
+    """
+
+    def __init__(
+        self,
+        mesh,
+        field,
+        evaluator,
+        physics,
+        integrator,
+    ):
+        super().__init__()
+
+        # Core pipeline
+        self.mesh = mesh
+        self.field = field
+        self.evaluator = evaluator
+        self.physics = physics
+        self.integrator = integrator
+
+    # -----------------------------------------------------
+    # Main Forward Pass (Energy / Residual evaluation)
+    # -----------------------------------------------------
+    def forward(self):
+        """
+        Returns:
+            scalar loss / energy
+        """
+        x_q, u_q, measure = self.evaluator.evaluate()
+
+        integrand = self.physics.integrand(x_q, u_q)
+
+        loss = self.integrator.integrate(integrand, measure)
+
+        return loss
+
+
 # =========================================================
 # Main
 # =========================================================
@@ -330,7 +381,15 @@ def main():
     physics = PoissonPhysics(f)
     integrator = Integrator()
 
-    optimizer = torch.optim.Adam(field.parameters(), lr=1)
+    model = FEMModel(
+        mesh=mesh,
+        field=field,
+        evaluator=evaluator,
+        physics=physics,
+        integrator=integrator,
+    )
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=1)
     loss_history = []
 
     plot_loss = True
