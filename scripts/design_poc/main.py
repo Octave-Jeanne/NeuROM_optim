@@ -398,9 +398,7 @@ def main():
     print("* Training")
     n_epochs = 7000
     for i in range(n_epochs):
-        x_q, u_q, measure = evaluator.evaluate()
-        integrand = physics.integrand(x_q, u_q)
-        loss = integrator.integrate(integrand, measure)
+        loss = model()
 
         optimizer.zero_grad()
         loss.backward()
@@ -418,9 +416,10 @@ def main():
         plt.show()
 
     print("\n* Evaluation")
+    x_q, u_q, _ = model.evaluator.evaluate()
 
     x_test = torch.linspace(0, 6, 30)
-    u_test = evaluator.evaluate_at(x_test)
+    u_test = model.evaluator.evaluate_at(x_test)
 
     if plot_test:
         plt.figure()
