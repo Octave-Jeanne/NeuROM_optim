@@ -86,6 +86,12 @@ class MidPointQuadrature1D(QuadratureRule):
 
 
 class TwoPointsQuadrature1D(QuadratureRule):
+    """
+    Two points quadrature for segment.
+
+    Generates tensors of shape (N_q x N_nodes).
+    Points are represented with barycentric coordinates.
+    """
     def __init__(self):
         super().__init__(LineReferenceElement)
 
@@ -105,6 +111,9 @@ class TwoPointsQuadrature1D(QuadratureRule):
     def weights(self):
         return self.weights_ref
 
+def barycentric_to_reference(x_barycentric, element: ReferenceElement):
+    x_barycentric 
+    return torch.einsum("enx,en->ex", element_nodes_positions, N)
 
 # =========================================================
 # Geometry Mapping
@@ -222,6 +231,7 @@ class ElementEvaluator1D(nn.Module):
         xi_g_barycentric = (
             self.quad.points().repeat(self.mesh.n_elements, 1).squeeze(-1)
         )
+        breakpoint()
 
         x_ref = self.sf.reference_element.simplex.repeat(xi_g_barycentric.shape[0], 1)
         xi_g = torch.einsum("ei,ei->e", xi_g_barycentric, x_ref)
@@ -247,7 +257,6 @@ class ElementEvaluator1D(nn.Module):
         nodes_values = nodes_values.to(N.dtype)
 
         u_q = torch.einsum("gij,gi->gj", nodes_values, N)
-
         return x_g, u_q, measure
 
     def evaluate_at(self, x):
@@ -351,9 +360,7 @@ class FEMModel(nn.Module):
             scalar loss / energy
         """
         x_q, u_q, measure = self.evaluator.evaluate()
-
         integrand = self.physics.integrand(x_q, u_q)
-
         loss = self.integrator.integrate(integrand, measure)
 
         return loss
@@ -371,7 +378,8 @@ def main():
     mesh = Mesh1D(nodes, elements)
 
     sf = LinearLineShapeFunction()
-    quad = TwoPointsQuadrature1D()
+    quad = MidPointQuadrature1D()
+    #quad = TwoPointsQuadrature1D()
     mapping = IsoparametricMapping1D(sf)
 
     field = ScalarField1D(mesh, dirichlet_nodes=[0, N - 1])
@@ -407,6 +415,14 @@ def main():
         loss_history.append(loss.item())
         print(f"{i=} loss={loss.item():.3e}", end="\r")
 
+    print("\n* Evaluation")
+    #At quadrature points
+    x_q, u_q, _ = model.evaluator.evaluate()
+
+    #At test points
+    x_test = torch.linspace(0, 6, 30)
+    u_test = model.evaluator.evaluate_at(x_test)
+
     if plot_loss:
         plt.figure()
         plt.plot(loss_history)
@@ -414,12 +430,6 @@ def main():
         plt.ylabel("Loss")
         plt.title("Training Loss")
         plt.show()
-
-    print("\n* Evaluation")
-    x_q, u_q, _ = model.evaluator.evaluate()
-
-    x_test = torch.linspace(0, 6, 30)
-    u_test = model.evaluator.evaluate_at(x_test)
 
     if plot_test:
         plt.figure()
