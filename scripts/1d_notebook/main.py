@@ -165,7 +165,6 @@ class interpolation1D(nn.Module):
             nodal_values_tensor[:, None, :].repeat(1, 2, 1), 0, Ids.repeat(1, 1, 1)
         )  # [:,:,None] usefull only in 2+D  Ids.repeat(1,1,d) with d \in [1,3]
         self.nodes_values = self.nodes_values.to(shape_functions.dtype)
-        print("interpol, forward(): ", self.nodes_values, "\n")
         u = torch.einsum("gi...,gi->g", self.nodes_values, shape_functions)
 
         if self.training:

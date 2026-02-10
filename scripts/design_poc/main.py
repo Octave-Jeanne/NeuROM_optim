@@ -3,157 +3,10 @@ import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 
+#Import library modules
+from hidenn_playground import elements, quadratures, shape_functions, geometry
+
 torch.set_default_dtype(torch.float32)
-
-
-# =========================================================
-# Reference Element
-# =========================================================
-class ReferenceElement(nn.Module, ABC):
-    def __init__(self):
-        super().__init__()
-
-
-class LineReferenceElement(ReferenceElement):
-    def __init__(self):
-        super().__init__()
-
-        simplex = torch.tensor([-1.0, 1.0])
-        self.register_buffer("simplex", simplex)
-
-        self.dim = 1
-        self.n_nodes = simplex.shape[0]
-
-        measure = torch.abs(simplex[1] - simplex[0])
-        self.register_buffer("measure", measure)
-
-
-# =========================================================
-# Shape Functions
-# =========================================================
-class ShapeFunction(nn.Module, ABC):
-    def __init__(self, reference_element: ReferenceElement):
-        super().__init__()
-        self.reference_element = reference_element
-
-    @abstractmethod
-    def N(self, xi):
-        pass
-
-
-class LinearLineShapeFunction(ShapeFunction):
-    def __init__(self):
-        super().__init__(LineReferenceElement())
-
-    def N(self, xi):
-        return torch.stack([-0.5 * (xi - 1.0), 0.5 * (xi + 1.0)], dim=1)
-
-
-class SecondOrderLineShapeFunction(ShapeFunction):
-    def __init__(self):
-        super().__init__(LineReferenceElement())
-
-    def N(self, xi):
-        return torch.stack(
-            [0.5 * xi * (xi - 1.0), 1.0 - xi**2, 0.5 * xi * (xi + 1.0)], dim=1
-        )
-
-
-# =========================================================
-# Quadratures
-# =========================================================
-class QuadratureRule(nn.Module, ABC):
-    def __init__(self, reference_element):
-        super().__init__()
-        self.reference_element = reference_element()
-
-
-class MidPointQuadrature1D(QuadratureRule):
-    def __init__(self):
-        super().__init__(LineReferenceElement)
-
-        points = torch.tensor([0.0])
-        weights = self.reference_element.measure.clone()
-
-        self.register_buffer("points_ref", points)
-        self.register_buffer("weights_ref", weights[None])
-
-    def points(self):
-        return self.points_ref
-
-    def weights(self):
-        return self.weights_ref
-
-
-class TwoPointsQuadrature1D(QuadratureRule):
-    """
-    Two points quadrature for segment.
-
-    Generates tensors of shape (N_q x N_nodes).
-    Points are represented with barycentric coordinates.
-    """
-    def __init__(self):
-        super().__init__(LineReferenceElement)
-
-        l1 = 0.5 * (1.0 - 1 / 3**0.5)
-        l2 = 0.5 * (1.0 + 1 / 3**0.5)
-
-        points = torch.tensor([-l2 + l1, -l1 + l2])
-        w = 0.5 * self.reference_element.measure
-        weights = torch.tensor([w, w])
-
-        self.register_buffer("points_ref", points)
-        self.register_buffer("weights_ref", weights)
-
-    def points(self):
-        return self.points_ref
-
-    def weights(self):
-        return self.weights_ref
-
-def barycentric_to_reference(x_barycentric, element: ReferenceElement):
-    x_barycentric 
-    return torch.einsum("enx,en->ex", element_nodes_positions, N)
-
-# =========================================================
-# Geometry Mapping
-# =========================================================
-class IsoparametricMapping1D(nn.Module):
-    def __init__(self, shape_function):
-        super().__init__()
-        self.sf = shape_function
-
-    def map(self, element_nodes_positions, xi):
-        N = self.sf.N(xi)
-        return torch.einsum("enx,en->ex", element_nodes_positions, N)
-
-    def inverse_map(self, x, element_nodes_positions):
-        det_J = element_nodes_positions[:, 0, 0] - element_nodes_positions[:, 1, 0]
-
-        inverse_mapping = torch.ones(
-            [int(element_nodes_positions.shape[0]), 2, 2],
-            dtype=x.dtype,
-            device=x.device,
-        )
-        inverse_mapping[:, 0, 1] = -element_nodes_positions[:, 1, 0]
-        inverse_mapping[:, 1, 1] = element_nodes_positions[:, 0, 0]
-        inverse_mapping[:, 1, 0] = -1 * inverse_mapping[:, 1, 0]
-        inverse_mapping[:, :, :] /= det_J[:, None, None]
-
-        x_extended = torch.stack((x, torch.ones_like(x)), dim=1)
-
-        xi_barycentric = torch.einsum(
-            "eij,ej...->ei", inverse_mapping, x_extended.squeeze(1)
-        )
-
-        x_ref = self.sf.reference_element.simplex.repeat(xi_barycentric.shape[0], 1)
-        xi = torch.einsum("ei,ei->e", xi_barycentric, x_ref)
-
-        return xi
-
-    def element_length(self, x_nodes):
-        return x_nodes[:, 1, 0] - x_nodes[:, 0, 0]
-
 
 # =========================================================
 # Mesh
@@ -228,27 +81,32 @@ class ElementEvaluator1D(nn.Module):
         self.mapping = mapping
 
     def evaluate(self):
-        xi_g_barycentric = (
-            self.quad.points().repeat(self.mesh.n_elements, 1).squeeze(-1)
-        )
-        breakpoint()
+        #(N_q, N_nodes)
+        x_q_barycentric = self.quad.points()
+        #(N_e, N_nodes)
+        x_el_nodes = self.mesh.element_nodes_positions
+        #(N_q, dim )
+        xi = elements.barycentric_to_reference(x_lambda = x_q_barycentric, element=self.quad.reference_element)
+        #(N_e, N_q, dim)
+        xi_g = xi.unsqueeze(0).expand(self.mesh.n_elements, -1, -1)
 
-        x_ref = self.sf.reference_element.simplex.repeat(xi_g_barycentric.shape[0], 1)
-        xi_g = torch.einsum("ei,ei->e", xi_g_barycentric, x_ref)
-
-        x_g = self.mapping.map(self.mesh.element_nodes_positions, xi_g)
+        #(N_e, N_q, dim) 
+        x_g = self.mapping.map(xi_g, x_el_nodes)
+        #Required for autograd
         x_g.requires_grad_(True)
 
-        xi_q = self.mapping.inverse_map(x_g, self.mesh.element_nodes_positions)
-        N = self.sf.N(xi_q)
-        w = self.quad.weights()
-        measure = (
-            self.mapping.element_length(self.mesh.nodes_positions[self.mesh.conn])[
-                :, None
-            ]
-            * w[None, :]
-        )
+        #(N_e, N_q, dim)
+        xi_q = self.mapping.inverse_map(x_g, x_el_nodes)
 
+        #(N_e, N_q, N_nodes)
+        N = self.sf.N(xi_q)
+
+        #Compute weighted measure
+        w = self.quad.weights()
+        dx = self.mapping.element_size(x_el_nodes)
+        measure = dx * w
+
+        #Compute nodal values per element
         nodes_values = torch.gather(
             self.field.full_values()[:, None, :].repeat(1, 2, 1),
             0,
@@ -256,12 +114,15 @@ class ElementEvaluator1D(nn.Module):
         )
         nodes_values = nodes_values.to(N.dtype)
 
-        u_q = torch.einsum("gij,gi->gj", nodes_values, N)
+        #Interpolate field 
+        #(N_e, N_q, dim)
+        u_q = torch.einsum("en...,eqn...->eq...", nodes_values, N)
         return x_g, u_q, measure
 
     def evaluate_at(self, x):
         device = self.mesh.nodes_positions.device
-
+        x = x.unsqueeze(1).unsqueeze(2)
+        #List elements to which `x` belongs to.  
         ids = []
         for x_i in x:
             for e, conn in enumerate(self.mesh.conn):
@@ -274,16 +135,15 @@ class ElementEvaluator1D(nn.Module):
         element_ids = torch.tensor(ids, device=device)
 
         element_nodes_ids = self.mesh.conn[element_ids, :]
-        element_nodes_positions = self.mesh.element_nodes_positions[element_ids]
+        #(N_e, N_q, dim)
+        x_nodes = self.mesh.element_nodes_positions[element_ids]
 
-        xi = self.mapping.inverse_map(x, element_nodes_positions)
+        xi = self.mapping.inverse_map(x, x_nodes)
         N = self.sf.N(xi)
-
         u_full = self.field.full_values()
         nodes_values = u_full[element_nodes_ids]
         nodes_values = nodes_values.to(N.dtype)
-
-        u_q = torch.einsum("gij,gi->gj", nodes_values, N)
+        u_q = torch.einsum("en...,eqn...->eq...", nodes_values, N)
         return u_q.detach()
 
 
@@ -306,7 +166,12 @@ class PoissonPhysics:
 # =========================================================
 class Integrator:
     def integrate(self, integrand, measure):
-        return torch.sum(integrand * measure)
+        """
+        Args:
+            integrand: The field to integrate (N_e, N_q)
+            measure: The measure to weight the integrand (N_e, N_q)
+        """
+        return torch.einsum("eq...,eq...->", integrand, measure)
 
 
 # =========================================================
@@ -377,10 +242,10 @@ def main():
 
     mesh = Mesh1D(nodes, elements)
 
-    sf = LinearLineShapeFunction()
-    quad = MidPointQuadrature1D()
-    #quad = TwoPointsQuadrature1D()
-    mapping = IsoparametricMapping1D(sf)
+    sf = shape_functions.LinearSegment()
+    #quad = quadratures.MidPoint1D()
+    quad = quadratures.TwoPoints1D()
+    mapping = geometry.IsoparametricMapping1D(sf)
 
     field = ScalarField1D(mesh, dirichlet_nodes=[0, N - 1])
 
@@ -397,7 +262,7 @@ def main():
         integrator=integrator,
     )
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=1)
+    optimizer = torch.optim.Adam(model.parameters(), lr=10)
     loss_history = []
 
     plot_loss = True
@@ -421,8 +286,7 @@ def main():
 
     #At test points
     x_test = torch.linspace(0, 6, 30)
-    u_test = model.evaluator.evaluate_at(x_test)
-
+    u_test = model.evaluator.evaluate_at(x_test).squeeze()
     if plot_loss:
         plt.figure()
         plt.plot(loss_history)
