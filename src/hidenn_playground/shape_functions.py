@@ -4,6 +4,7 @@ import torch.nn as nn
 
 import hidenn_playground.elements as elements
 
+
 class ShapeFunction(nn.Module, ABC):
     def __init__(self, reference_element: elements.ReferenceElement):
         super().__init__()
@@ -16,6 +17,7 @@ class ShapeFunction(nn.Module, ABC):
         returns (N_q, N_nodes)
         """
         pass
+
 
 class LinearSegment(ShapeFunction):
     def __init__(self):
@@ -31,10 +33,11 @@ class LinearSegment(ShapeFunction):
         return torch.stack(
             [
                 -0.5 * (xi0 - 1.0),
-                 0.5 * (xi0 + 1.0),
+                0.5 * (xi0 + 1.0),
             ],
-            dim=-1
+            dim=-1,
         )
+
 
 class QuadraticSegment(ShapeFunction):
     def __init__(self):
@@ -50,6 +53,5 @@ class QuadraticSegment(ShapeFunction):
                 1.0 - xi**2,
                 0.5 * xi * (xi + 1.0),
             ],
-            dim=-1
+            dim=-1,
         )
-

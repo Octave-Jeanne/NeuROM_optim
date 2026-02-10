@@ -3,10 +3,11 @@ import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 
-#Import library modules
+# Import library modules
 from hidenn_playground import elements, quadratures, shape_functions, geometry
 
 torch.set_default_dtype(torch.float32)
+
 
 # =========================================================
 # Mesh
@@ -81,32 +82,34 @@ class ElementEvaluator1D(nn.Module):
         self.mapping = mapping
 
     def evaluate(self):
-        #(N_q, N_nodes)
+        # (N_q, N_nodes)
         x_q_barycentric = self.quad.points()
-        #(N_e, N_nodes)
+        # (N_e, N_nodes)
         x_el_nodes = self.mesh.element_nodes_positions
-        #(N_q, dim )
-        xi = elements.barycentric_to_reference(x_lambda = x_q_barycentric, element=self.quad.reference_element)
-        #(N_e, N_q, dim)
+        # (N_q, dim )
+        xi = elements.barycentric_to_reference(
+            x_lambda=x_q_barycentric, element=self.quad.reference_element
+        )
+        # (N_e, N_q, dim)
         xi_g = xi.unsqueeze(0).expand(self.mesh.n_elements, -1, -1)
 
-        #(N_e, N_q, dim) 
+        # (N_e, N_q, dim)
         x_g = self.mapping.map(xi_g, x_el_nodes)
-        #Required for autograd
+        # Required for autograd
         x_g.requires_grad_(True)
 
-        #(N_e, N_q, dim)
+        # (N_e, N_q, dim)
         xi_q = self.mapping.inverse_map(x_g, x_el_nodes)
 
-        #(N_e, N_q, N_nodes)
+        # (N_e, N_q, N_nodes)
         N = self.sf.N(xi_q)
 
-        #Compute weighted measure
+        # Compute weighted measure
         w = self.quad.weights()
         dx = self.mapping.element_size(x_el_nodes)
         measure = dx * w
 
-        #Compute nodal values per element
+        # Compute nodal values per element
         nodes_values = torch.gather(
             self.field.full_values()[:, None, :].repeat(1, 2, 1),
             0,
@@ -114,15 +117,15 @@ class ElementEvaluator1D(nn.Module):
         )
         nodes_values = nodes_values.to(N.dtype)
 
-        #Interpolate field 
-        #(N_e, N_q, dim)
+        # Interpolate field
+        # (N_e, N_q, dim)
         u_q = torch.einsum("en...,eqn...->eq...", nodes_values, N)
         return x_g, u_q, measure
 
     def evaluate_at(self, x):
         device = self.mesh.nodes_positions.device
         x = x.unsqueeze(1).unsqueeze(2)
-        #List elements to which `x` belongs to.  
+        # List elements to which `x` belongs to.
         ids = []
         for x_i in x:
             for e, conn in enumerate(self.mesh.conn):
@@ -135,7 +138,7 @@ class ElementEvaluator1D(nn.Module):
         element_ids = torch.tensor(ids, device=device)
 
         element_nodes_ids = self.mesh.conn[element_ids, :]
-        #(N_e, N_q, dim)
+        # (N_e, N_q, dim)
         x_nodes = self.mesh.element_nodes_positions[element_ids]
 
         xi = self.mapping.inverse_map(x, x_nodes)
@@ -178,7 +181,7 @@ class Integrator:
 # Force function
 # =========================================================
 def f(x):
-    return 1000.0 + 0 * x
+    return 1000.0
 
 
 # ============================================================
@@ -243,7 +246,7 @@ def main():
     mesh = Mesh1D(nodes, elements)
 
     sf = shape_functions.LinearSegment()
-    #quad = quadratures.MidPoint1D()
+    # quad = quadratures.MidPoint1D()
     quad = quadratures.TwoPoints1D()
     mapping = geometry.IsoparametricMapping1D(sf)
 
@@ -281,10 +284,10 @@ def main():
         print(f"{i=} loss={loss.item():.3e}", end="\r")
 
     print("\n* Evaluation")
-    #At quadrature points
+    # At quadrature points
     x_q, u_q, _ = model.evaluator.evaluate()
 
-    #At test points
+    # At test points
     x_test = torch.linspace(0, 6, 30)
     u_test = model.evaluator.evaluate_at(x_test).squeeze()
     if plot_loss:

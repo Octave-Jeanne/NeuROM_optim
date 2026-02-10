@@ -3,8 +3,9 @@ import torch.nn as nn
 
 import hidenn_playground.shape_functions as shape_functions
 
+
 class IsoparametricMapping1D(nn.Module):
-    def __init__(self, shape_function: shape_functions.ShapeFunction ):
+    def __init__(self, shape_function: shape_functions.ShapeFunction):
         super().__init__()
         self.sf = shape_function
 
@@ -19,7 +20,7 @@ class IsoparametricMapping1D(nn.Module):
         Returns:
             The positions interpolated in the physical space: (N_e, N_q, dim)
         """
-        #N_e x N_q x N_nodes
+        # N_e x N_q x N_nodes
         N = self.sf.N(xi)
         return torch.einsum("eq...,eqn...->eq...", x_nodes, N)
 
@@ -39,11 +40,11 @@ class IsoparametricMapping1D(nn.Module):
         """
         # Base node (node 0)
         # (N_e, dim)
-        x0 = x_nodes[:, 0, :]                   
+        x0 = x_nodes[:, 0, :]
 
         # Build Jacobian matrix J = [x1-x0, x2-x0, ...]
         # (N_e, dim, dim)
-        J = x_nodes[:, 1:, :] - x0[:, None, :]   
+        J = x_nodes[:, 1:, :] - x0[:, None, :]
 
         # Invert Jacobian
         # (N_e, dim, dim)
@@ -55,15 +56,14 @@ class IsoparametricMapping1D(nn.Module):
 
         # Apply inverse mapping
         # xi = J_inv @ dx
-        xi = torch.einsum('eij...,eqj...->eqi', J_inv, dx)
+        xi = torch.einsum("eij...,eqj...->eqi", J_inv, dx)
 
         return xi
-
 
     def element_size(self, x_nodes):
         """
         Computes the size of the physical elements.
-    
+
         Args:
             x_nodes: The nodal points in physical space (N_e, N_nodes, dim)
 
@@ -71,5 +71,3 @@ class IsoparametricMapping1D(nn.Module):
             The size of the element.
         """
         return x_nodes[:, 1, :] - x_nodes[:, 0, :]
-
-
