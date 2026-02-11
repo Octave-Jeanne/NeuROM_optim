@@ -19,6 +19,7 @@ dependencies = [
 #`pip install -e .[docs]`
 [project.optional-dependencies]
 dev = [
+   "pytest>=9.0.2",
    "ruff>=0.14.10",
 ]
 docs = [
@@ -35,6 +36,7 @@ docs = [
 #uv sync --group dev --group docs
 [dependency-groups]
 dev = [
+   "pytest>=9.0.2",
    "ruff>=0.14.10",
 ]
 docs = [
