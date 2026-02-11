@@ -26,5 +26,3 @@ class Field(nn.Module):
         full[self.dofs_free] = self.values_free
         full[~self.dofs_free] = self.values_imposed
         return full
-
-

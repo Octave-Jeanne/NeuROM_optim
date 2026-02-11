@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+
 class FEMModel(nn.Module):
     """
     Thin orchestration module.
@@ -38,4 +39,3 @@ class FEMModel(nn.Module):
         loss = self.integrator.integrate(integrand, measure)
 
         return loss
-

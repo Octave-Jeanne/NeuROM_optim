@@ -25,7 +25,7 @@ class LinearSegment(ShapeFunction):
 
     def N(self, xi):
         """
-        xi_q : (N_e, N_q, dim_ref)
+        xi: (N_e, N_q, dim_ref)
         returns (N_e, N_q, N_nodes)
         """
         xi0 = xi[..., 0]

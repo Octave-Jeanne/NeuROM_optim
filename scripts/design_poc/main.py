@@ -15,6 +15,7 @@ from hidenn_playground.fem_model import FEMModel
 
 torch.set_default_dtype(torch.float32)
 
+
 # =========================================================
 # Physics
 # =========================================================
@@ -28,11 +29,13 @@ class PoissonPhysics:
         )[0]
         return 0.5 * du_dx**2 - self.f(x) * u
 
+
 # =========================================================
 # Force function
 # =========================================================
 def f(x):
     return 1000.0
+
 
 # =========================================================
 # Main
@@ -47,7 +50,7 @@ def main():
 
     sf = LinearSegment()
     quad = MidPoint1D()
-    #quad = quadratures.TwoPoints1D()
+    # quad = quadratures.TwoPoints1D()
     mapping = IsoparametricMapping1D(sf)
     field = Field(mesh, dirichlet_nodes=[0, N - 1])
     evaluator = ElementEvaluator1D(mesh, field, sf, quad, mapping)

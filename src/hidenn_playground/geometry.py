@@ -1,11 +1,11 @@
 import torch
 import torch.nn as nn
 
-import hidenn_playground.shape_functions as shape_functions
+from hidenn_playground.shape_functions import ShapeFunction
 
 
 class IsoparametricMapping1D(nn.Module):
-    def __init__(self, shape_function: shape_functions.ShapeFunction):
+    def __init__(self, shape_function: ShapeFunction):
         super().__init__()
         self.sf = shape_function
 
@@ -20,9 +20,11 @@ class IsoparametricMapping1D(nn.Module):
         Returns:
             The positions interpolated in the physical space: (N_e, N_q, dim)
         """
-        # N_e x N_q x N_nodes
+        # (N_e, N_q, N_nodes)
         N = self.sf.N(xi)
-        return torch.einsum("eq...,eqn...->eq...", x_nodes, N)
+        # Sum along N_nodes index
+        # Product of tensor (N_e, N_nodes, dim) x (N_e, N_q, N_nodes)
+        return torch.einsum("en...,eqn...->eq...", x_nodes, N)
 
     def inverse_map(self, x, x_nodes):
         """
@@ -36,27 +38,22 @@ class IsoparametricMapping1D(nn.Module):
             xi:       (N_e, N_q, dim)      reference coordinates
 
         Note:
-            This linear mapping only works for linear shape functions.
+            This linear mapping only works for linear shape functions and segment element.
         """
-        # Base node (node 0)
+        # Center pointer per element
         # (N_e, dim)
-        x0 = x_nodes[:, 0, :]
+        x_half = 0.5 * (x_nodes[:, 1, :] + x_nodes[:, 0, :])
 
-        # Build Jacobian matrix J = [x1-x0, x2-x0, ...]
-        # (N_e, dim, dim)
-        J = x_nodes[:, 1:, :] - x0[:, None, :]
+        # Inverse mapping
+        # (N_e, dim)
+        J_inv = 2.0 / self.element_size(x_nodes)
 
-        # Invert Jacobian
-        # (N_e, dim, dim)
-        J_inv = torch.linalg.inv(J)
-
-        # Compute x - x0
+        # Offset positions
         # (N_e, N_q, dim)
-        dx = x - x0[:, None, :]
+        offset = x - x_half.unsqueeze(1)
 
-        # Apply inverse mapping
-        # xi = J_inv @ dx
-        xi = torch.einsum("eij...,eqj...->eqi", J_inv, dx)
+        # Compute reference position
+        xi = offset * J_inv.unsqueeze(1)
 
         return xi
 

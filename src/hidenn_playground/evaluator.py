@@ -3,6 +3,7 @@ import torch.nn as nn
 
 import hidenn_playground.elements as elements
 
+
 class ElementEvaluator1D(nn.Module):
     def __init__(self, mesh, field, sf, quad, mapping):
         super().__init__()
@@ -15,15 +16,14 @@ class ElementEvaluator1D(nn.Module):
     def evaluate(self):
         # (N_q, N_nodes)
         x_q_barycentric = self.quad.points()
-        # (N_e, N_nodes)
-        x_el_nodes = self.mesh.element_nodes_positions
         # (N_q, dim )
         xi = elements.barycentric_to_reference(
             x_lambda=x_q_barycentric, element=self.quad.reference_element
         )
         # (N_e, N_q, dim)
         xi_g = xi.unsqueeze(0).expand(self.mesh.n_elements, -1, -1)
-
+        # (N_e, N_nodes)
+        x_el_nodes = self.mesh.element_nodes_positions
         # (N_e, N_q, dim)
         x_g = self.mapping.map(xi_g, x_el_nodes)
         # Required for autograd
@@ -40,17 +40,15 @@ class ElementEvaluator1D(nn.Module):
         dx = self.mapping.element_size(x_el_nodes)
         measure = dx * w
 
-        # Compute nodal values per element
-        nodes_values = torch.gather(
-            self.field.full_values()[:, None, :].repeat(1, 2, 1),
-            0,
-            self.mesh.element_nodes_ids.repeat(1, 1, 1),
-        )
-        nodes_values = nodes_values.to(N.dtype)
+        # Gather nodal values per element
+        # (N_e, N_nodes, dim)
+        element_values = self.field.full_values()[self.mesh.conn]
+        element_values = element_values.to(N.dtype)
 
         # Interpolate field
-        # (N_e, N_q, dim)
-        u_q = torch.einsum("en...,eqn...->eq...", nodes_values, N)
+        # Product of tensor (N_e, N_nodes, dim) x (N_e, N_q, N_nodes) over N_nodes
+        # This gives tensor (N_e, N_q, dim)
+        u_q = torch.einsum("en...,eqn...->eq...", element_values, N)
         return x_g, u_q, measure
 
     def evaluate_at(self, x):

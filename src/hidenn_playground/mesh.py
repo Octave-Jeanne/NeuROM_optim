@@ -9,6 +9,7 @@ class Mesh(nn.Module):
     * Its connectivity (vertex indices forming simplex)
     * Its vertices' positions
     """
+
     def __init__(self, nodes, connectivity):
         super().__init__()
 
@@ -34,5 +35,3 @@ class Mesh(nn.Module):
             "element_nodes_positions",
             element_nodes_positions.to(self.nodes_positions.dtype),
         )
-
-
