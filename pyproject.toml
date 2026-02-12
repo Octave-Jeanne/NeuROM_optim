@@ -28,7 +28,7 @@ docs = [
     "myst-parser",
     "sphinx-autodoc-typehints",
     "sphinx-design>=0.7.0",
-    "furo",
+    "sphinx-rtd-theme",
     "sphinx-copybutton",
 ]
 
@@ -45,7 +45,7 @@ docs = [
     "myst-parser",
     "sphinx-autodoc-typehints",
     "sphinx-design>=0.7.0",
-    "furo",
+    "sphinx-rtd-theme",
     "sphinx-copybutton",
 ]
 
