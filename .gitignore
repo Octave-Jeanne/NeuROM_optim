@@ -1,18 +1,18 @@
-ToSort/
-.vscode/*
-*.vtk
-*.xml
-*.npy
-.logs/
+# Python-generated files
 __pycache__/
-Drafts/
-.DS_Store
-.ipynb_checkpoints/
-Results/
-*.msh
-draft.py
-logs/
-TrainedModels/
-Geometries/L_shape.geo
-Square_small.geo
-NeuROM_Py.egg-info
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+#Vim temporary files
+*.swp
+
+# Tools
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Virtual environments
+.venv

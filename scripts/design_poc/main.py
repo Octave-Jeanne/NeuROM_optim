@@ -1,0 +1,115 @@
+from abc import ABC, abstractmethod
+import torch
+import torch.nn as nn
+import matplotlib.pyplot as plt
+
+# Import library modules
+from hidenn_playground.quadratures import MidPoint1D, TwoPoints1D
+from hidenn_playground.shape_functions import LinearSegment
+from hidenn_playground.geometry import IsoparametricMapping1D
+from hidenn_playground.mesh import Mesh
+from hidenn_playground.field import Field
+from hidenn_playground.integrator import Integrator
+from hidenn_playground.evaluator import ElementEvaluator1D
+from hidenn_playground.fem_model import FEMModel
+
+torch.set_default_dtype(torch.float32)
+
+
+# =========================================================
+# Physics
+# =========================================================
+class PoissonPhysics:
+    def __init__(self, f):
+        self.f = f
+
+    def integrand(self, x, u):
+        du_dx = torch.autograd.grad(
+            u, x, grad_outputs=torch.ones_like(u), create_graph=True
+        )[0]
+        return 0.5 * du_dx**2 - self.f(x) * u
+
+
+# =========================================================
+# Force function
+# =========================================================
+def f(x):
+    return 1000.0
+
+
+# =========================================================
+# Main
+# =========================================================
+def main():
+
+    N = 40
+    nodes = torch.linspace(0, 6.28, N)[:, None]
+    elements = torch.vstack([torch.arange(0, N - 1), torch.arange(1, N)]).T
+
+    mesh = Mesh(nodes, elements)
+
+    sf = LinearSegment()
+    quad = MidPoint1D()
+    # quad = quadratures.TwoPoints1D()
+    mapping = IsoparametricMapping1D(sf)
+    field = Field(mesh, dirichlet_nodes=[0, N - 1])
+    evaluator = ElementEvaluator1D(mesh, field, sf, quad, mapping)
+    physics = PoissonPhysics(f)
+    integrator = Integrator()
+
+    model = FEMModel(
+        mesh=mesh,
+        field=field,
+        evaluator=evaluator,
+        physics=physics,
+        integrator=integrator,
+    )
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=10)
+    loss_history = []
+
+    plot_loss = True
+    plot_test = True
+
+    print("* Training")
+    n_epochs = 7000
+    for i in range(n_epochs):
+        loss = model()
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        loss_history.append(loss.item())
+        print(f"{i=} loss={loss.item():.3e}", end="\r")
+
+    print("\n* Evaluation")
+    # At quadrature points
+    x_q, u_q, _ = model.evaluator.evaluate()
+
+    # At test points
+    x_test = torch.linspace(0, 6, 30)
+    u_test = model.evaluator.evaluate_at(x_test).squeeze()
+    if plot_loss:
+        plt.figure()
+        plt.plot(loss_history)
+        plt.xlabel("Epoch")
+        plt.ylabel("Loss")
+        plt.title("Training Loss")
+        plt.show()
+
+    if plot_test:
+        plt.figure()
+        plt.plot(
+            x_q.flatten().detach(), u_q.flatten().detach(), "+", label="Gauss points"
+        )
+        plt.plot(x_test, u_test, "o", label="Test points")
+        plt.xlabel("x [mm]")
+        plt.ylabel("u(x) [mm]")
+        plt.title("Displacement Field")
+        plt.legend()
+        plt.show()
+
+
+if __name__ == "__main__":
+    main()
