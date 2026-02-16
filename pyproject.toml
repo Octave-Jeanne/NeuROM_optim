@@ -1,64 +1,45 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hidenn_playground"
-version = "0.1.0"
-description = "Various POC for HideNN framework using pytorch."
+name = "NeuROM_optim"
+dynamic = ["version"]
+authors = [
+    {name = "Octave Jeanne, Théodore Cherrière, Alexandre Daby-Seesaram", email = "octave.jeane@ens-paris-saclay.fr"}
+]
+description = "NeuROM_optim, a topology optimisation library based on the HiDeNN Framework (Finite Element Neural Network Interpolation)"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.8"
+license = {text = "GPLv3"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
+]
 dependencies = [
-    "matplotlib>=3.10.8",
-    "numpy>=2.2.6",
-    "torch>=2.10.0",
+    "torch",
+    "matplotlib",
+    "meshio",
+    "numpy",
+    "ipython",
+    "tqdm",
+    "vtk",
 ]
 
-#Install with:
-#`pip install -e .[dev]`
-#`pip install -e .[docs]`
-[project.optional-dependencies]
-dev = [
-   "pytest>=9.0.2",
-   "ruff>=0.14.10",
-]
-docs = [
-    "sphinx",
-    "sphinx-autoapi>=3.6.1",
-    "myst-parser",
-    "sphinx-autodoc-typehints",
-    "sphinx-design>=0.7.0",
-    "sphinx-rtd-theme",
-    "sphinx-copybutton",
-]
+[project.urls]
+Homepage = "https://github.com/Octave-Jeanne/NeuROM_optim"
 
-#Required for `uv` install:
-#uv sync --group dev --group docs
-[dependency-groups]
-dev = [
-   "pytest>=9.0.2",
-   "ruff>=0.14.10",
-]
-docs = [
-    "sphinx",
-    "sphinx-autoapi>=3.6.1",
-    "myst-parser",
-    "sphinx-autodoc-typehints",
-    "sphinx-design>=0.7.0",
-    "sphinx-rtd-theme",
-    "sphinx-copybutton",
-]
+[project.scripts]
+neurom_optim = "neurom_optim:main"
 
-#Path to the library source code
+# [tool.setuptools]
+# packages = ["neurom_optim" ]
+
+# ==== automates the discovery of the package architecture ====
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
+include = ["neurom_optim*"]  
 
-[tool.pytest.ini_options]
-#Path to the tests folder
-testpaths = ["tests"]
-#Recommended for new projects: https://docs.pytest.org/en/stable/explanation/goodpractices.html
-addopts = ["--import-mode=importlib"]
-
-[tool.coverage.run]
-branch = true
-source = ["hidenn_playground"]
+[tool.setuptools_scm]
+version_file = "neurom_optim/_version.py"

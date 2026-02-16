@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+authors:
+  - family-names: Jeanne
+    given-names: Octave
+    orcid: XXX
+  - family-names: Cherrière
+    given-names: Théodore
+    orcid: 0000-0001-5421-4061
+  - family-names: Daby-Seesaram
+    given-names: Alexandre
+    orcid: 0000-0002-2374-0971
+title: "NeuROM-optim"
+url: https://github.com/Octave-Jeanne/Stage_ARIA/
+doi: 10.5281/zenodo.XXXXXXXX
