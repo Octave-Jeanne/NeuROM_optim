@@ -4,5 +4,6 @@ A pytorch-based package to solve topology optimisation problems for (non) linear
 ## Installation
 
 1. First create a conda env running `conda create  -n neurom-optim-env python 3.13 -y`
-2. Then clone the project `git clone git@github.com:Octave-Jeanne/Stage_ARIA.git`
-3. Install the library in editable mode `pip install -e .` 
+2. Then clone the project `git clone https://github.com/Octave-Jeanne/NeuROM_optim`
+3. Go in the clone directory `cd NeuROM_optim`
+4. Install the library in editable mode `pip install -e .` 
