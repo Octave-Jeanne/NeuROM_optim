@@ -59,15 +59,17 @@ class Magnetostatic_Optim_2D_loss(nn.Module):
         potential = field_term - source_term
 
         domain_area = (mapping_det*gauss_weights).sum()
-        volume_term = (mapping_det*choice).sum()/domain_area
+        soft_volume_term = (mapping_det*choice).sum()/domain_area
+        hard_volume_term = (mapping_det*(choice>=0.5)).sum()/domain_area
 
 
-        loss = potential + self.lagrange_multiplier*volume_term 
+        loss = potential + self.lagrange_multiplier*soft_volume_term 
 
 
         if get_metrics:
             metrics = {'loss' : loss,
-                       'volume_term' : volume_term,
+                       'soft_volume_term' : soft_volume_term,
+                       'hard_volume_term' : hard_volume_term,
                        'potential' : potential,
                        'field_term' : field_term,
                        'source_term' : source_term}

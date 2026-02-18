@@ -1,0 +1,2 @@
+[console_scripts]
+neurom_optim = neurom_optim:main

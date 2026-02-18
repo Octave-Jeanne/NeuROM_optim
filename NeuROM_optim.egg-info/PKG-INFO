@@ -1,0 +1,32 @@
+Metadata-Version: 2.4
+Name: NeuROM_optim
+Version: 2026.2.17.dev5+g74dbdcfb5.d20260218
+Summary: NeuROM_optim, a topology optimisation library based on the HiDeNN Framework (Finite Element Neural Network Interpolation)
+Author-email: "Octave Jeanne, Théodore Cherrière, Alexandre Daby-Seesaram" <octave.jeane@ens-paris-saclay.fr>
+License: GPLv3
+Project-URL: Homepage, https://github.com/Octave-Jeanne/NeuROM_optim
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: GNU General Public License v3 (GPLv3)
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: torch
+Requires-Dist: matplotlib
+Requires-Dist: meshio
+Requires-Dist: numpy
+Requires-Dist: ipython
+Requires-Dist: tqdm
+Requires-Dist: vtk
+Dynamic: license-file
+
+# NeuROM-optim
+A pytorch-based package to solve topology optimisation problems for (non) linear 2D magnetostatics problems.
+
+## Installation
+
+1. First create a conda env running `conda create -n neurom-optim-env python=3.13 -y`
+2. Activate the env `conda activate neurom-optim-env`
+3. Then clone the project `git clone https://github.com/Octave-Jeanne/NeuROM_optim`
+4. Go in the cloned directory `cd NeuROM_optim`
+5. Install the library in editable mode `pip install -e .` 
