@@ -59,8 +59,8 @@ class Magnetostatic_Optim_2D_loss(nn.Module):
         potential = field_term - source_term
 
         domain_area = (mapping_det*gauss_weights).sum()
-        soft_volume_term = (mapping_det*choice).sum()/domain_area
-        hard_volume_term = (mapping_det*(choice>=0.5)).sum()/domain_area
+        soft_volume_term = (gauss_weights* mapping_det*choice).sum()/domain_area
+        hard_volume_term = (gauss_weights* mapping_det*(choice>=0.5)).sum()/domain_area
 
 
         loss = potential + self.lagrange_multiplier*soft_volume_term 
@@ -133,7 +133,7 @@ class Magnetostatic_Optim_2D_loss(nn.Module):
             choice = Mat('nu',el_ids = torch.arange(0, Mat.NElem), NPoints = 1, return_choice = True)
 
             domain_area = (mapping_det*gauss_weights).sum()
-            volume_term = (mapping_det*choice).sum()/domain_area
+            volume_term = (gauss_weights*mapping_det*choice)/domain_area
 
 
             cells = {'triangle' : field.connectivity.clone().detach().cpu().data.numpy()}
